@@ -3,17 +3,23 @@ import express from "express";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import { bucket } from "../utils/firebase.js";
+import { pool } from "../utils/db.js"; // assuming you have a pool or db export
 
 const router = express.Router();
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 const firebaseStorage = bucket;
 
-// Protected upload route
 router.post("/", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    const { expenseId } = req.body;
+
+    if (!expenseId) {
+      return res.status(400).json({ message: "Missing expenseId in request body" });
     }
 
     const file = req.file;
@@ -32,9 +38,15 @@ router.post("/", upload.single("file"), async (req, res) => {
     });
 
     stream.on("finish", async () => {
-      // Make file publicly accessible (or use signed URLs)
       await fileUpload.makePublic();
       const publicUrl = `https://storage.googleapis.com/${firebaseStorage.name}/${fileName}`;
+
+      // Update the expense with the image URL
+      await pool.query(
+        "UPDATE expenses SET invoice_image_url = $1 WHERE id = $2 AND user_id = $3",
+        [publicUrl, expenseId, req.user]
+      );
+
       res.status(200).json({ imageUrl: publicUrl });
     });
 
