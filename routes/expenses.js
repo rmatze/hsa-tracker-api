@@ -198,28 +198,4 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// GET /api/expenses/:id/images - list images for a specific expense
-router.get("/:id/images", async (req, res) => {
-  const userId = req.user;
-  const { id: expenseId } = req.params;
-
-  try {
-    const { rows } = await pool.query(
-      `
-        SELECT id, image_url, mime_type, created_at
-        FROM expense_images
-        WHERE expense_id = $1
-          AND user_id = $2
-        ORDER BY created_at ASC
-      `,
-      [expenseId, userId]
-    );
-
-    res.json(rows);
-  } catch (error) {
-    console.error("Failed to fetch expense images:", error);
-    res.status(500).json({ message: "Failed to fetch expense images" });
-  }
-});
-
 export default router;

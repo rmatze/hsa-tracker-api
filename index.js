@@ -4,6 +4,7 @@ import cors from "cors";
 import expenseRoutes from "./routes/expenses.js";
 import uploadRoutes from "./routes/upload.js";
 import categoryRoutes from "./routes/categories.js";
+import imageRoutes from "./routes/images.js";
 import authMiddleware from "./middleware/auth.js";
 import connectDB from "./utils/db.js";
 import { firebaseApp } from "./utils/firebase.js";
@@ -37,6 +38,7 @@ app.use((req, res, next) => {
 app.use("/api/expenses", authMiddleware, expenseRoutes);
 app.use("/api/upload", authMiddleware, uploadRoutes);
 app.use("/api/categories", authMiddleware, categoryRoutes);
+app.use("/api/images", authMiddleware, imageRoutes);
 
 // Root route
 app.get("/", (req, res) => {
