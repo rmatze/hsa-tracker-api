@@ -59,7 +59,6 @@ router.post("/", async (req, res) => {
     date_paid,
     payment_method,
     description,
-    invoice_image_url,
     category_id,
   } = req.body;
 
@@ -84,10 +83,9 @@ router.post("/", async (req, res) => {
         date_paid,
         payment_method,
         description,
-        invoice_image_url,
         category_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
     `;
     const values = [
@@ -97,7 +95,6 @@ router.post("/", async (req, res) => {
       date_paid,
       payment_method,
       description || "",
-      invoice_image_url || null,
       category_id || null,
     ];
 
@@ -140,7 +137,6 @@ router.put("/:id", async (req, res) => {
     date_paid,
     payment_method,
     description,
-    invoice_image_url,
     category_id,
   } = req.body;
 
@@ -162,12 +158,11 @@ router.put("/:id", async (req, res) => {
         SET amount = $1,
             date_paid = $2,
             payment_method = $3,
-            description = $4,
-            invoice_image_url = $5
-        WHERE id = $6 AND user_id = $7
+            description = $4
+        WHERE id = $5 AND user_id = $6
         RETURNING *
       `;
-      values = [amount, date_paid, payment_method, description, invoice_image_url, id, userId];
+      values = [amount, date_paid, payment_method, description, id, userId];
     } else {
       query = `
         UPDATE expenses
@@ -175,9 +170,8 @@ router.put("/:id", async (req, res) => {
             date_paid = $2,
             payment_method = $3,
             description = $4,
-            invoice_image_url = $5,
-            category_id = $6
-        WHERE id = $7 AND user_id = $8
+            category_id = $5
+        WHERE id = $6 AND user_id = $7
         RETURNING *
       `;
       values = [
@@ -185,7 +179,6 @@ router.put("/:id", async (req, res) => {
         date_paid,
         payment_method,
         description,
-        invoice_image_url,
         category_id || null,
         id,
         userId,
@@ -202,6 +195,30 @@ router.put("/:id", async (req, res) => {
   } catch (err) {
     console.error("Error updating expense:", err);
     res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// GET /api/expenses/:id/images - list images for a specific expense
+router.get("/:id/images", async (req, res) => {
+  const userId = req.user;
+  const { id: expenseId } = req.params;
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT id, image_url, mime_type, created_at
+        FROM expense_images
+        WHERE expense_id = $1
+          AND user_id = $2
+        ORDER BY created_at ASC
+      `,
+      [expenseId, userId]
+    );
+
+    res.json(rows);
+  } catch (error) {
+    console.error("Failed to fetch expense images:", error);
+    res.status(500).json({ message: "Failed to fetch expense images" });
   }
 });
 

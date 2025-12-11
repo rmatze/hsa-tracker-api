@@ -3,13 +3,14 @@ import express from "express";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import { bucket } from "../utils/firebase.js";
-import { pool } from "../utils/db.js"; // assuming you have a pool or db export
+import { pool } from "../utils/db.js";
 
 const router = express.Router();
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 const firebaseStorage = bucket;
 
+// POST /api/upload - upload a single file and attach it to an expense
 router.post("/", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -41,13 +42,21 @@ router.post("/", upload.single("file"), async (req, res) => {
       await fileUpload.makePublic();
       const publicUrl = `https://storage.googleapis.com/${firebaseStorage.name}/${fileName}`;
 
-      // Update the expense with the image URL
+      // Insert a new expense image record
+      const imageId = uuidv4();
       await pool.query(
-        "UPDATE expenses SET invoice_image_url = $1 WHERE id = $2 AND user_id = $3",
-        [publicUrl, expenseId, req.user]
+        `
+          INSERT INTO expense_images (id, expense_id, user_id, image_url, mime_type)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        [imageId, expenseId, req.user, publicUrl, file.mimetype]
       );
 
-      res.status(200).json({ imageUrl: publicUrl });
+      res.status(200).json({
+        imageId,
+        imageUrl: publicUrl,
+        mimeType: file.mimetype,
+      });
     });
 
     stream.end(file.buffer);
