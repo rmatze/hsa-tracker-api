@@ -182,6 +182,58 @@ curl -X GET "http://localhost:4000/api/reimbursements/EXPENSE_ID" \
 
 ---
 
+### GET `/api/reimbursements/summary/overall`
+
+**Description:** Returns a high-level summary of how much you **could** reimburse vs how much you **have** reimbursed, optionally within a date range.
+
+**Query params (optional):**
+- `from`: start date (YYYY-MM-DD)
+- `to`: end date (YYYY-MM-DD)
+
+If `from`/`to` are omitted, all non-archived expenses for the user are included.
+
+**Example: all-time summary**
+
+```bash
+curl -X GET "http://localhost:4000/api/reimbursements/summary/overall" \
+  -H "Authorization: Bearer YOUR_FIREBASE_ID_TOKEN"
+```
+
+**Example: summary for 2025 only**
+
+```bash
+curl -X GET "http://localhost:4000/api/reimbursements/summary/overall?from=2025-01-01&to=2025-12-31" \
+  -H "Authorization: Bearer YOUR_FIREBASE_ID_TOKEN"
+```
+
+**Response shape:**
+
+```json
+{
+  "totalEligible": 4820.12,
+  "totalReimbursed": 2200.0,
+  "remaining": 2620.12,
+  "byCategory": [
+    {
+      "categoryId": "UUID_OF_CATEGORY",
+      "categoryName": "Dental",
+      "totalEligible": 1800.0,
+      "totalReimbursed": 600.0,
+      "remaining": 1200.0
+    },
+    {
+      "categoryId": null,
+      "categoryName": "Uncategorized",
+      "totalEligible": 200.0,
+      "totalReimbursed": 0.0,
+      "remaining": 200.0
+    }
+  ]
+}
+```
+
+---
+
 ### DELETE `/api/reimbursements/:id`
 
 **Description:** Soft-delete a specific reimbursement record (kept for history via `is_deleted = TRUE`) and recompute the expense’s reimbursement summary.

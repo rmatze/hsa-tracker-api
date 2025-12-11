@@ -288,6 +288,133 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+// GET /api/reimbursements/summary - overall reimbursement summary (optionally filtered by date range)
+// Query params:
+//   - from (optional): start date (YYYY-MM-DD)
+//   - to   (optional): end date (YYYY-MM-DD)
+router.get("/summary/overall", async (req, res) => {
+  const userId = req.user;
+  const { from, to } = req.query;
+
+  try {
+    // 1. Get all eligible expenses for user in date range
+    const expensesResult = await pool.query(
+      `
+        SELECT
+          e.id,
+          e.amount,
+          e.date_paid,
+          e.category_id
+        FROM expenses e
+        WHERE e.user_id = $1
+          AND (e.is_archived = FALSE OR e.is_archived IS NULL)
+          AND ($2::date IS NULL OR e.date_paid >= $2)
+          AND ($3::date IS NULL OR e.date_paid <= $3)
+      `,
+      [userId, from || null, to || null]
+    );
+
+    const expenses = expensesResult.rows;
+
+    if (expenses.length === 0) {
+      return res.json({
+        totalEligible: 0,
+        totalReimbursed: 0,
+        remaining: 0,
+        byCategory: [],
+      });
+    }
+
+    const expenseIds = expenses.map((e) => e.id);
+
+    // 2. Get reimbursements for those expenses
+    const reimbursementsResult = await pool.query(
+      `
+        SELECT expense_id, SUM(amount) AS total_reimbursed
+        FROM expense_reimbursements
+        WHERE user_id = $1
+          AND (is_deleted = FALSE OR is_deleted IS NULL)
+          AND expense_id = ANY($2::uuid[])
+        GROUP BY expense_id
+      `,
+      [userId, expenseIds]
+    );
+
+    const reimbursedByExpense = new Map();
+    for (const row of reimbursementsResult.rows) {
+      reimbursedByExpense.set(row.expense_id, Number(row.total_reimbursed));
+    }
+
+    // 3. Aggregate totals and by-category breakdown in JS
+    let totalEligible = 0;
+    let totalReimbursed = 0;
+    const categoryMap = new Map(); // key: category_id (or null), value: { eligible, reimbursed }
+
+    for (const e of expenses) {
+      const amount = Number(e.amount);
+      const reimbursed = reimbursedByExpense.get(e.id) || 0;
+      const remaining = amount - reimbursed;
+
+      totalEligible += amount;
+      totalReimbursed += reimbursed;
+
+      const catKey = e.category_id || null;
+      if (!categoryMap.has(catKey)) {
+        categoryMap.set(catKey, { eligible: 0, reimbursed: 0 });
+      }
+      const agg = categoryMap.get(catKey);
+      agg.eligible += amount;
+      agg.reimbursed += reimbursed;
+    }
+
+    const remainingTotal = totalEligible - totalReimbursed;
+
+    // 4. Attach category names
+    const categoryIds = [...categoryMap.keys()].filter((id) => id !== null);
+    let categoriesById = new Map();
+
+    if (categoryIds.length > 0) {
+      const categoriesResult = await pool.query(
+        `
+          SELECT id, name
+          FROM expense_categories
+          WHERE id = ANY($1::uuid[])
+        `,
+        [categoryIds]
+      );
+
+      categoriesById = new Map(
+        categoriesResult.rows.map((c) => [c.id, c.name])
+      );
+    }
+
+    const byCategory = [];
+    for (const [categoryId, agg] of categoryMap.entries()) {
+      const eligible = agg.eligible;
+      const reimbursed = agg.reimbursed;
+      const remaining = eligible - reimbursed;
+
+      byCategory.push({
+        categoryId,
+        categoryName: categoryId ? categoriesById.get(categoryId) || "Unknown" : "Uncategorized",
+        totalEligible: eligible,
+        totalReimbursed: reimbursed,
+        remaining,
+      });
+    }
+
+    res.json({
+      totalEligible,
+      totalReimbursed,
+      remaining: remainingTotal,
+      byCategory,
+    });
+  } catch (error) {
+    console.error("Failed to fetch reimbursement summary:", error);
+    res.status(500).json({ message: "Failed to fetch reimbursement summary" });
+  }
+});
+
 export default router;
 
 

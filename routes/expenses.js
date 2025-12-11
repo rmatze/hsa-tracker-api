@@ -36,10 +36,19 @@ router.get("/", async (req, res) => {
     let query = `
       SELECT
         e.*,
-        c.name AS category_name
+        c.name AS category_name,
+        COALESCE(r.total_reimbursed, 0) AS total_reimbursed,
+        (e.amount - COALESCE(r.total_reimbursed, 0)) AS remaining_to_reimburse
       FROM expenses e
       LEFT JOIN expense_categories c
         ON e.category_id = c.id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(er.amount), 0) AS total_reimbursed
+        FROM expense_reimbursements er
+        WHERE er.expense_id = e.id
+          AND er.user_id = $1
+          AND (er.is_deleted = FALSE OR er.is_deleted IS NULL)
+      ) r ON TRUE
       WHERE e.user_id = $1
         AND ($2::uuid IS NULL OR e.category_id = $2)
     `;
