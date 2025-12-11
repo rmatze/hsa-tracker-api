@@ -17,6 +17,14 @@ Base URL (local): `http://localhost:4000`
 - `categoryId` (optional): UUID of an `expense_categories` record
 - `reimbursed` (optional): `"true"` or `"false"`
 
+**Response notes:**
+
+Each expense object includes a few helpful derived fields:
+
+- `category_name`: the name of the linked category (or `null` if uncategorized).
+- `total_reimbursed`: sum of all non-deleted reimbursements for that expense and user.
+- `remaining_to_reimburse`: `amount - total_reimbursed`.
+
 **Example: get active, unreimbursed expenses**
 
 ```bash
