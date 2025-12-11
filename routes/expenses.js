@@ -24,13 +24,12 @@ const validateCategoryExists = async (categoryId) => {
 };
 
 // Get all expenses for the logged-in user
-// status query param controls archived filtering:
-//   - status=active   (default) → only non-archived
-//   - status=archived → only archived
-//   - status=all      → both
+// Query params:
+//   - status=active|archived|all  (archived filter; default: active)
+//   - reimbursed=true|false       (optional reimbursement filter)
 router.get("/", async (req, res) => {
   const userId = req.user;
-  const { categoryId, status } = req.query;
+  const { categoryId, status, reimbursed } = req.query;
   const normalizedStatus = (status || "active").toLowerCase();
 
   try {
@@ -47,6 +46,7 @@ router.get("/", async (req, res) => {
 
     const values = [userId, categoryId || null];
 
+    // Archived filter
     if (normalizedStatus === "archived") {
       query += `
         AND e.is_archived = TRUE
@@ -57,6 +57,17 @@ router.get("/", async (req, res) => {
       // default: active
       query += `
         AND (e.is_archived = FALSE OR e.is_archived IS NULL)
+      `;
+    }
+
+    // Reimbursement filter
+    if (reimbursed === "true") {
+      query += `
+        AND e.is_reimbursed = TRUE
+      `;
+    } else if (reimbursed === "false") {
+      query += `
+        AND e.is_reimbursed = FALSE
       `;
     }
 
@@ -222,6 +233,75 @@ router.put("/:id", async (req, res) => {
     res.json(rows[0]);
   } catch (err) {
     console.error("Error updating expense:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// Mark or unmark an expense as reimbursed
+// PATCH /api/expenses/:id/reimburse
+// Body:
+//   { is_reimbursed: boolean, reimbursed_at?: string, reimbursement_method?: string, reimbursement_notes?: string }
+router.patch("/:id/reimburse", async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user;
+  const {
+    is_reimbursed,
+    reimbursed_at,
+    reimbursement_method,
+    reimbursement_notes,
+  } = req.body;
+
+  if (typeof is_reimbursed !== "boolean") {
+    return res.status(400).json({ message: "is_reimbursed must be a boolean" });
+  }
+
+  try {
+    let query;
+    let values;
+
+    if (is_reimbursed) {
+      const effectiveDate = reimbursed_at ? new Date(reimbursed_at) : new Date();
+
+      query = `
+        UPDATE expenses
+        SET is_reimbursed = TRUE,
+            reimbursed_at = $3,
+            reimbursement_method = $4,
+            reimbursement_notes = $5
+        WHERE id = $1
+          AND user_id = $2
+        RETURNING *
+      `;
+      values = [
+        id,
+        userId,
+        effectiveDate,
+        reimbursement_method || null,
+        reimbursement_notes || null,
+      ];
+    } else {
+      query = `
+        UPDATE expenses
+        SET is_reimbursed = FALSE,
+            reimbursed_at = NULL,
+            reimbursement_method = NULL,
+            reimbursement_notes = NULL
+        WHERE id = $1
+          AND user_id = $2
+        RETURNING *
+      `;
+      values = [id, userId];
+    }
+
+    const { rowCount, rows } = await pool.query(query, values);
+
+    if (rowCount === 0) {
+      return res.status(404).json({ message: "Expense not found or not authorized." });
+    }
+
+    res.json(rows[0]);
+  } catch (error) {
+    console.error("Error updating reimbursement status:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 });
