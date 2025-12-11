@@ -24,25 +24,47 @@ const validateCategoryExists = async (categoryId) => {
 };
 
 // Get all expenses for the logged-in user
+// status query param controls archived filtering:
+//   - status=active   (default) → only non-archived
+//   - status=archived → only archived
+//   - status=all      → both
 router.get("/", async (req, res) => {
   const userId = req.user;
-  const { categoryId } = req.query;
+  const { categoryId, status } = req.query;
+  const normalizedStatus = (status || "active").toLowerCase();
 
   try {
-    const result = await pool.query(
-      `
-        SELECT
-          e.*,
-          c.name AS category_name
-        FROM expenses e
-        LEFT JOIN expense_categories c
-          ON e.category_id = c.id
-        WHERE e.user_id = $1
-          AND ($2::uuid IS NULL OR e.category_id = $2)
-        ORDER BY e.date_paid DESC
-      `,
-      [userId, categoryId || null]
-    );
+    let query = `
+      SELECT
+        e.*,
+        c.name AS category_name
+      FROM expenses e
+      LEFT JOIN expense_categories c
+        ON e.category_id = c.id
+      WHERE e.user_id = $1
+        AND ($2::uuid IS NULL OR e.category_id = $2)
+    `;
+
+    const values = [userId, categoryId || null];
+
+    if (normalizedStatus === "archived") {
+      query += `
+        AND e.is_archived = TRUE
+      `;
+    } else if (normalizedStatus === "all") {
+      // no extra filter
+    } else {
+      // default: active
+      query += `
+        AND (e.is_archived = FALSE OR e.is_archived IS NULL)
+      `;
+    }
+
+    query += `
+      ORDER BY e.date_paid DESC
+    `;
+
+    const result = await pool.query(query, values);
 
     res.json(result.rows);
   } catch (error) {
@@ -106,26 +128,32 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Delete an expense
-router.delete('/:id', async (req, res) => {
-    const { id } = req.params;
-    const userId = req.user; // or req.user.uid if that's how it's defined
-  
-    try {
-      const { rowCount } = await pool.query(
-        `DELETE FROM expenses WHERE id = $1 AND user_id = $2`,
-        [id, userId]
-      );
-  
-      if (rowCount === 0) {
-        return res.status(404).json({ message: "Expense not found or not authorized." });
-      }
-  
-      res.json({ message: "Expense deleted successfully." });
-    } catch (err) {
-      console.error("Error deleting expense:", err);
-      res.status(500).json({ message: "Internal server error" });
+// Soft-delete (archive) an expense
+router.delete("/:id", async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user;
+
+  try {
+    const { rowCount } = await pool.query(
+      `
+        UPDATE expenses
+        SET is_archived = TRUE
+        WHERE id = $1
+          AND user_id = $2
+          AND (is_archived = FALSE OR is_archived IS NULL)
+      `,
+      [id, userId]
+    );
+
+    if (rowCount === 0) {
+      return res.status(404).json({ message: "Expense not found, not authorized, or already archived." });
     }
+
+    res.json({ message: "Expense archived successfully." });
+  } catch (err) {
+    console.error("Error archiving expense:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
 });
 
 // Update an expense
