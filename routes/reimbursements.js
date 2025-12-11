@@ -207,31 +207,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /api/reimbursements/:expenseId - list reimbursements for a specific expense
-router.get("/:expenseId", async (req, res) => {
-  const userId = req.user;
-  const { expenseId } = req.params;
-
-  try {
-    const { rows } = await pool.query(
-      `
-        SELECT id, amount, reimbursed_at, method, notes
-        FROM expense_reimbursements
-        WHERE expense_id = $1
-          AND user_id = $2
-          AND (is_deleted = FALSE OR is_deleted IS NULL)
-        ORDER BY reimbursed_at ASC
-      `,
-      [expenseId, userId]
-    );
-
-    res.json(rows);
-  } catch (error) {
-    console.error("Failed to fetch reimbursements:", error);
-    res.status(500).json({ message: "Failed to fetch reimbursements" });
-  }
-});
-
 // DELETE /api/reimbursements/:id - soft-delete a specific reimbursement and recompute summary
 router.delete("/:id", async (req, res) => {
   const userId = req.user;
@@ -288,7 +263,7 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// GET /api/reimbursements/summary - overall reimbursement summary (optionally filtered by date range)
+// GET /api/reimbursements/summary/overall - overall reimbursement summary (optionally filtered by date range)
 // Query params:
 //   - from (optional): start date (YYYY-MM-DD)
 //   - to   (optional): end date (YYYY-MM-DD)
@@ -412,6 +387,154 @@ router.get("/summary/overall", async (req, res) => {
   } catch (error) {
     console.error("Failed to fetch reimbursement summary:", error);
     res.status(500).json({ message: "Failed to fetch reimbursement summary" });
+  }
+});
+
+// Helper to escape values for CSV
+const escapeCsvValue = (value) => {
+  if (value === null || typeof value === "undefined") {
+    return "";
+  }
+  const str = String(value);
+  if (str.includes('"') || str.includes(",") || str.includes("\n")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
+// GET /api/reimbursements/export - export expenses + reimbursement info as CSV
+// Query params:
+//   - year (optional): e.g. 2025
+//   - from (optional): YYYY-MM-DD
+//   - to   (optional): YYYY-MM-DD
+// If year is provided, it sets from/to to cover that calendar year unless from/to are explicitly given.
+router.get("/export", async (req, res) => {
+  const userId = req.user;
+  let { year, from, to } = req.query;
+
+  // Derive from/to from year if provided and explicit from/to are not set
+  if (year && !from && !to) {
+    const yearInt = parseInt(year, 10);
+    if (!Number.isNaN(yearInt) && yearInt > 0) {
+      from = `${yearInt}-01-01`;
+      to = `${yearInt}-12-31`;
+    }
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        SELECT
+          e.id,
+          e.date_paid,
+          e.amount,
+          e.description,
+          e.payment_method,
+          e.is_reimbursed,
+          e.reimbursed_at,
+          e.reimbursement_method,
+          e.reimbursement_notes,
+          c.name AS category_name,
+          COALESCE(r.total_reimbursed, 0) AS total_reimbursed
+        FROM expenses e
+        LEFT JOIN expense_categories c
+          ON e.category_id = c.id
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(er.amount), 0) AS total_reimbursed
+          FROM expense_reimbursements er
+          WHERE er.expense_id = e.id
+            AND er.user_id = $1
+            AND (er.is_deleted = FALSE OR er.is_deleted IS NULL)
+        ) r ON TRUE
+        WHERE e.user_id = $1
+          AND (e.is_archived = FALSE OR e.is_archived IS NULL)
+          AND ($2::date IS NULL OR e.date_paid >= $2)
+          AND ($3::date IS NULL OR e.date_paid <= $3)
+        ORDER BY e.date_paid ASC, e.id ASC
+      `,
+      [userId, from || null, to || null]
+    );
+
+    const rows = result.rows;
+
+    // Build CSV
+    const headers = [
+      "ExpenseId",
+      "DatePaid",
+      "Amount",
+      "Category",
+      "Description",
+      "PaymentMethod",
+      "IsReimbursed",
+      "TotalReimbursed",
+      "RemainingToReimburse",
+      "ReimbursedAt",
+      "ReimbursementMethod",
+      "ReimbursementNotes",
+    ];
+
+    const csvLines = [headers.join(",")];
+
+    for (const row of rows) {
+      const totalReimbursed = Number(row.total_reimbursed) || 0;
+      const amount = Number(row.amount) || 0;
+      const remaining = amount - totalReimbursed;
+
+      const line = [
+        escapeCsvValue(row.id),
+        escapeCsvValue(row.date_paid ? row.date_paid.toISOString().slice(0, 10) : ""),
+        escapeCsvValue(amount.toFixed(2)),
+        escapeCsvValue(row.category_name || "Uncategorized"),
+        escapeCsvValue(row.description || ""),
+        escapeCsvValue(row.payment_method || ""),
+        escapeCsvValue(row.is_reimbursed ? "true" : "false"),
+        escapeCsvValue(totalReimbursed.toFixed(2)),
+        escapeCsvValue(remaining.toFixed(2)),
+        escapeCsvValue(row.reimbursed_at ? row.reimbursed_at.toISOString() : ""),
+        escapeCsvValue(row.reimbursement_method || ""),
+        escapeCsvValue(row.reimbursement_notes || ""),
+      ].join(",");
+
+      csvLines.push(line);
+    }
+
+    const csvContent = csvLines.join("\n");
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="hsa-reimbursements-export${year ? "-" + year : ""}.csv"`
+    );
+    res.status(200).send(csvContent);
+  } catch (error) {
+    console.error("Failed to export reimbursements CSV:", error);
+    res.status(500).json({ message: "Failed to export reimbursements" });
+  }
+});
+
+// GET /api/reimbursements/:expenseId - list reimbursements for a specific expense
+// NOTE: This route must be defined AFTER more specific routes like /summary/* and /export.
+router.get("/:expenseId", async (req, res) => {
+  const userId = req.user;
+  const { expenseId } = req.params;
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT id, amount, reimbursed_at, method, notes
+        FROM expense_reimbursements
+        WHERE expense_id = $1
+          AND user_id = $2
+          AND (is_deleted = FALSE OR is_deleted IS NULL)
+        ORDER BY reimbursed_at ASC
+      `,
+      [expenseId, userId]
+    );
+
+    res.json(rows);
+  } catch (error) {
+    console.error("Failed to fetch reimbursements:", error);
+    res.status(500).json({ message: "Failed to fetch reimbursements" });
   }
 });
 

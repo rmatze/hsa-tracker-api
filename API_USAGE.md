@@ -234,6 +234,44 @@ curl -X GET "http://localhost:4000/api/reimbursements/summary/overall?from=2025-
 
 ---
 
+### GET `/api/reimbursements/export`
+
+**Description:** Export expenses and reimbursement information as a CSV file.
+
+**Query params (optional):**
+- `year`: e.g. `2025`. If provided (and `from`/`to` are not), the export covers that calendar year.
+- `from`: start date (YYYY-MM-DD)
+- `to`: end date (YYYY-MM-DD)
+
+If both `from` and `to` are omitted, all non-archived expenses for the user are included.
+
+**Example: export for 2025**
+
+```bash
+curl -X GET "http://localhost:4000/api/reimbursements/export?year=2025" \
+  -H "Authorization: Bearer YOUR_FIREBASE_ID_TOKEN" \
+  -o hsa-reimbursements-2025.csv
+```
+
+**Columns:**
+
+- `ExpenseId`
+- `DatePaid` (YYYY-MM-DD)
+- `Amount`
+- `Category`
+- `Description`
+- `PaymentMethod`
+- `IsReimbursed` (`true` / `false`)
+- `TotalReimbursed` (sum of non-deleted reimbursements for the expense)
+- `RemainingToReimburse` (`Amount - TotalReimbursed`)
+- `ReimbursedAt` (ISO timestamp of the latest reimbursement, if any)
+- `ReimbursementMethod` (from latest reimbursement / summary)
+- `ReimbursementNotes` (from latest reimbursement / summary)
+
+The response is returned with `Content-Type: text/csv` and a `Content-Disposition` header so most clients will download it as a file.
+
+---
+
 ### DELETE `/api/reimbursements/:id`
 
 **Description:** Soft-delete a specific reimbursement record (kept for history via `is_deleted = TRUE`) and recompute the expense’s reimbursement summary.
