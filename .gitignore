@@ -1,3 +1,4 @@
 /.env
 /HSA_Tracker_API.postman_collection.json
 /firebaseServiceAccountKey.json
+.DS_Store
