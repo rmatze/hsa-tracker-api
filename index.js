@@ -5,6 +5,7 @@ import expenseRoutes from "./routes/expenses.js";
 import uploadRoutes from "./routes/upload.js";
 import categoryRoutes from "./routes/categories.js";
 import imageRoutes from "./routes/images.js";
+import reimbursementRoutes from "./routes/reimbursements.js";
 import authMiddleware from "./middleware/auth.js";
 import connectDB from "./utils/db.js";
 import { firebaseApp } from "./utils/firebase.js";
@@ -39,6 +40,7 @@ app.use("/api/expenses", authMiddleware, expenseRoutes);
 app.use("/api/upload", authMiddleware, uploadRoutes);
 app.use("/api/categories", authMiddleware, categoryRoutes);
 app.use("/api/images", authMiddleware, imageRoutes);
+app.use("/api/reimbursements", authMiddleware, reimbursementRoutes);
 
 // Root route
 app.get("/", (req, res) => {

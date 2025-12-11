@@ -119,6 +119,112 @@ curl -X PATCH "http://localhost:4000/api/expenses/EXPENSE_ID/reimburse" \
 
 ---
 
+## Reimbursements
+
+### POST `/api/reimbursements`
+
+**Description:** Create a reimbursement record for an expense (supports partial reimbursements).
+
+**Body (JSON):**
+
+```json
+{
+  "expense_id": "EXPENSE_ID",
+  "amount": 100.00,
+  "method": "Fidelity HSA transfer",     // optional
+  "notes": "Partial reimbursement",      // optional
+  "reimbursed_at": "2025-02-21T15:30:00.000Z" // optional, defaults to now
+}
+```
+
+**Example:**
+
+```bash
+curl -X POST "http://localhost:4000/api/reimbursements" \
+  -H "Authorization: Bearer YOUR_FIREBASE_ID_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "expense_id": "EXPENSE_ID",
+    "amount": 100.00,
+    "method": "Fidelity HSA transfer",
+    "notes": "Partial reimbursement"
+  }'
+```
+
+If the new total reimbursed amount for that expense would exceed the original expense amount, the API returns `400` with details.
+
+---
+
+### GET `/api/reimbursements/:expenseId`
+
+**Description:** List reimbursement records for a specific expense.
+
+**Example:**
+
+```bash
+curl -X GET "http://localhost:4000/api/reimbursements/EXPENSE_ID" \
+  -H "Authorization: Bearer YOUR_FIREBASE_ID_TOKEN"
+```
+
+**Response shape:**
+
+```json
+[
+  {
+    "id": "REIMBURSEMENT_UUID",
+    "amount": 100.0,
+    "reimbursed_at": "2025-02-21T15:30:00.000Z",
+    "method": "Fidelity HSA transfer",
+    "notes": "Partial reimbursement"
+  }
+]
+```
+
+---
+
+### DELETE `/api/reimbursements/:id`
+
+**Description:** Soft-delete a specific reimbursement record (kept for history via `is_deleted = TRUE`) and recompute the expense’s reimbursement summary.
+
+**When to use:** When a reimbursement should no longer count at all (for example, it was entered by mistake or reversed by your HSA provider). Soft-deleted rows are:
+- Excluded from reimbursement totals and remaining calculations.
+- Excluded from `GET /api/reimbursements/:expenseId` results.
+
+**To change a reimbursement (amount, method, notes):**
+1. First call `DELETE /api/reimbursements/:id` to remove the old record from calculations.
+2. Then call `POST /api/reimbursements` again with the corrected data.
+
+**Example:**
+
+```bash
+curl -X DELETE "http://localhost:4000/api/reimbursements/REIMBURSEMENT_ID" \
+  -H "Authorization: Bearer YOUR_FIREBASE_ID_TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "message": "Reimbursement deleted successfully.",
+  "expense": {
+    "id": "EXPENSE_ID",
+    "is_reimbursed": false,
+    "reimbursed_at": null,
+    "reimbursement_method": null,
+    "reimbursement_notes": null
+    // ...other expense fields...
+  },
+  "totals": {
+    "expenseAmount": 300.0,
+    "totalReimbursed": 100.0,
+    "remaining": 200.0,
+    "isFullyReimbursed": false
+  }
+}
+```
+
+---
+
 ## Categories
 
 ### GET `/api/categories`
