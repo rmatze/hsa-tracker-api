@@ -23,8 +23,16 @@ router.post("/", upload.single("file"), async (req, res) => {
       return res.status(400).json({ message: "Missing expenseId in request body" });
     }
 
+    const mimeToExt = {
+      "image/jpeg": ".jpg",
+      "image/png": ".png",
+      "image/webp": ".webp",
+      "application/pdf": ".pdf",
+    };
+
     const file = req.file;
-    const fileName = `${req.user}/${uuidv4()}.jpg`;
+    const extension = mimeToExt[file.mimetype] || "";
+    const fileName = `${req.user}/${uuidv4()}${extension}`;
     const fileUpload = firebaseStorage.file(fileName);
 
     const stream = fileUpload.createWriteStream({
