@@ -272,19 +272,27 @@ router.get("/summary/overall", async (req, res) => {
   const { from, to } = req.query;
 
   try {
-    // 1. Get all eligible expenses for user in date range
+    // 1. Get all expenses that have at least one reimbursement in the date range (by reimbursed_at)
     const expensesResult = await pool.query(
       `
         SELECT
           e.id,
           e.amount,
           e.date_paid,
+          e.description,
           e.category_id
         FROM expenses e
         WHERE e.user_id = $1
           AND (e.is_archived = FALSE OR e.is_archived IS NULL)
-          AND ($2::date IS NULL OR e.date_paid >= $2)
-          AND ($3::date IS NULL OR e.date_paid <= $3)
+          AND EXISTS (
+            SELECT 1
+            FROM expense_reimbursements er
+            WHERE er.expense_id = e.id
+              AND er.user_id = $1
+              AND (er.is_deleted = FALSE OR er.is_deleted IS NULL)
+              AND ($2::date IS NULL OR er.reimbursed_at::date >= $2)
+              AND ($3::date IS NULL OR er.reimbursed_at::date <= $3)
+          )
       `,
       [userId, from || null, to || null]
     );
@@ -297,37 +305,51 @@ router.get("/summary/overall", async (req, res) => {
         totalReimbursed: 0,
         remaining: 0,
         byCategory: [],
+        byExpense: [],
       });
     }
 
     const expenseIds = expenses.map((e) => e.id);
 
-    // 2. Get reimbursements for those expenses
+    // 2. Get reimbursements for those expenses limited to the date range (by reimbursed_at)
     const reimbursementsResult = await pool.query(
       `
-        SELECT expense_id, SUM(amount) AS total_reimbursed
+        SELECT
+          expense_id,
+          SUM(amount) AS total_reimbursed,
+          MAX(reimbursed_at) AS last_reimbursed_at
         FROM expense_reimbursements
         WHERE user_id = $1
           AND (is_deleted = FALSE OR is_deleted IS NULL)
           AND expense_id = ANY($2::uuid[])
+          AND ($3::date IS NULL OR reimbursed_at::date >= $3)
+          AND ($4::date IS NULL OR reimbursed_at::date <= $4)
         GROUP BY expense_id
       `,
-      [userId, expenseIds]
+      [userId, expenseIds, from || null, to || null]
     );
 
     const reimbursedByExpense = new Map();
     for (const row of reimbursementsResult.rows) {
-      reimbursedByExpense.set(row.expense_id, Number(row.total_reimbursed));
+      reimbursedByExpense.set(row.expense_id, {
+        total: Number(row.total_reimbursed) || 0,
+        lastReimbursedAt: row.last_reimbursed_at,
+      });
     }
 
-    // 3. Aggregate totals and by-category breakdown in JS
+    // 3. Aggregate totals and by-category + by-expense breakdown in JS
     let totalEligible = 0;
     let totalReimbursed = 0;
     const categoryMap = new Map(); // key: category_id (or null), value: { eligible, reimbursed }
+    const byExpense = [];
 
     for (const e of expenses) {
       const amount = Number(e.amount);
-      const reimbursed = reimbursedByExpense.get(e.id) || 0;
+      const info = reimbursedByExpense.get(e.id) || {
+        total: 0,
+        lastReimbursedAt: null,
+      };
+      const reimbursed = info.total;
       const remaining = amount - reimbursed;
 
       totalEligible += amount;
@@ -340,6 +362,16 @@ router.get("/summary/overall", async (req, res) => {
       const agg = categoryMap.get(catKey);
       agg.eligible += amount;
       agg.reimbursed += reimbursed;
+
+      byExpense.push({
+        expenseId: e.id,
+        datePaid: e.date_paid,
+        description: e.description,
+        amount,
+        reimbursed,
+        remaining,
+        lastReimbursedAt: info.lastReimbursedAt,
+      });
     }
 
     const remainingTotal = totalEligible - totalReimbursed;
@@ -383,6 +415,7 @@ router.get("/summary/overall", async (req, res) => {
       totalReimbursed,
       remaining: remainingTotal,
       byCategory,
+      byExpense,
     });
   } catch (error) {
     console.error("Failed to fetch reimbursement summary:", error);
